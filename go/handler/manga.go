@@ -4,112 +4,85 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url" // Tambahan: untuk mengenkripsi URL ke format yang aman (URL Encoding)
+	"net/url"
 	"strings"
 	"time"
 )
 
 const upstreamBase = "https://api.shngm.io"
 
-// GANTI DENGAN API KEY DARI DASHBOARD SCRAPERAPI ANDA
+// API Key yang sudah Anda tes dan berhasil
 const scraperAPIKey = "d45d3542c5d2af84f1b5da3d5b05ffb1"
 
 var client = &http.Client{
-	// Timeout dinaikkan dari 15s ke 30s karena ScraperAPI butuh waktu ekstra untuk menjebol Cloudflare
-	Timeout: 30 * time.Second,
+	Timeout: 40 * time.Second, // Beri waktu lebih lama untuk proses proxy
 }
 
-// MangaList proxies GET /api/manga/list to the upstream shinigami API.
 func MangaList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Buat URL upstream, pastikan tidak ada double '?' jika query kosong
+	rawQuery := r.URL.RawQuery
+	upstream := fmt.Sprintf("%s/v1/manga/list", upstreamBase)
+	if rawQuery != "" {
+		upstream = fmt.Sprintf("%s?%s", upstream, rawQuery)
+	}
 
-	upstream := fmt.Sprintf("%s/v1/manga/list?%s", upstreamBase, r.URL.RawQuery)
 	proxyGet(w, r, upstream)
 }
 
-// MangaDetail proxies GET /api/manga/detail/{manga_id}
 func MangaDetail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	mangaID := extractPathParam(r.URL.Path, "/api/manga/detail/")
 	if mangaID == "" {
 		http.Error(w, "manga_id required", http.StatusBadRequest)
 		return
 	}
-
 	upstream := fmt.Sprintf("%s/v1/manga/detail/%s", upstreamBase, mangaID)
 	proxyGet(w, r, upstream)
 }
 
-// ChapterList proxies GET /api/chapter/{manga_id}/list
 func ChapterList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	path := r.URL.Path
 	path = strings.TrimPrefix(path, "/api/chapter/")
 	mangaID := strings.TrimSuffix(path, "/list")
-
-	if mangaID == "" {
-		http.Error(w, "manga_id required", http.StatusBadRequest)
-		return
+	upstream := fmt.Sprintf("%s/v1/chapter/%s/list", upstreamBase, mangaID)
+	if r.URL.RawQuery != "" {
+		upstream = fmt.Sprintf("%s?%s", upstream, r.URL.RawQuery)
 	}
-
-	upstream := fmt.Sprintf("%s/v1/chapter/%s/list?%s", upstreamBase, mangaID, r.URL.RawQuery)
 	proxyGet(w, r, upstream)
 }
 
-// ChapterDetail proxies GET /api/chapter/detail/{chapter_id}
 func ChapterDetail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	chapterID := extractPathParam(r.URL.Path, "/api/chapter/detail/")
-	if chapterID == "" {
-		http.Error(w, "chapter_id required", http.StatusBadRequest)
-		return
-	}
-
 	upstream := fmt.Sprintf("%s/v1/chapter/detail/%s", upstreamBase, chapterID)
 	proxyGet(w, r, upstream)
 }
 
-// proxyGet fetches from upstream and streams the response back using ScraperAPI
 func proxyGet(w http.ResponseWriter, r *http.Request, upstream string) {
-	// Encode URL target agar aman dimasukkan ke dalam parameter ScraperAPI
+	// PENTING: Gunakan url.QueryEscape agar URL target tidak berantakan saat dikirim ke ScraperAPI
 	encodedURL := url.QueryEscape(upstream)
 
-	// Format URL ScraperAPI
-	scraperURL := fmt.Sprintf("http://api.scraperapi.com?api_key=%s&url=%s&render=false", scraperAPIKey, encodedURL)
+	// Format URL persis seperti yang Anda tes di browser
+	scraperURL := fmt.Sprintf("http://api.scraperapi.com?api_key=%s&url=%s", scraperAPIKey, encodedURL)
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, scraperURL, nil)
 	if err != nil {
-		http.Error(w, "failed to create request", http.StatusInternalServerError)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	// ScraperAPI sudah mengurus User-Agent dan IP. Kita cukup pastikan menerima JSON.
-	req.Header.Set("Accept", "application/json")
-
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		http.Error(w, "Gagal menghubungi ScraperAPI", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
+	// Copy header penting
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=60")
+	w.Header().Set("Access-Control-Allow-Origin", "*") // Pastikan CORS tetap jalan
 	w.WriteHeader(resp.StatusCode)
 
 	io.Copy(w, resp.Body)
@@ -117,6 +90,5 @@ func proxyGet(w http.ResponseWriter, r *http.Request, upstream string) {
 
 func extractPathParam(path, prefix string) string {
 	s := strings.TrimPrefix(path, prefix)
-	s = strings.TrimRight(s, "/")
-	return s
+	return strings.TrimRight(s, "/")
 }
