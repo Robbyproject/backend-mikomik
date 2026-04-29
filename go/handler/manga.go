@@ -4,14 +4,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url" // Tambahan: untuk mengenkripsi URL ke format yang aman (URL Encoding)
 	"strings"
 	"time"
 )
 
 const upstreamBase = "https://api.shngm.io"
 
+// GANTI DENGAN API KEY DARI DASHBOARD SCRAPERAPI ANDA
+const scraperAPIKey = "d45d3542c5d2af84f1b5da3d5b05ffb1"
+
 var client = &http.Client{
-	Timeout: 15 * time.Second,
+	// Timeout dinaikkan dari 15s ke 30s karena ScraperAPI butuh waktu ekstra untuk menjebol Cloudflare
+	Timeout: 30 * time.Second,
 }
 
 // MangaList proxies GET /api/manga/list to the upstream shinigami API.
@@ -32,7 +37,6 @@ func MangaDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract manga_id from path: /api/manga/detail/{manga_id}
 	mangaID := extractPathParam(r.URL.Path, "/api/manga/detail/")
 	if mangaID == "" {
 		http.Error(w, "manga_id required", http.StatusBadRequest)
@@ -50,7 +54,6 @@ func ChapterList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract manga_id from path: /api/chapter/{manga_id}/list
 	path := r.URL.Path
 	path = strings.TrimPrefix(path, "/api/chapter/")
 	mangaID := strings.TrimSuffix(path, "/list")
@@ -81,28 +84,22 @@ func ChapterDetail(w http.ResponseWriter, r *http.Request) {
 	proxyGet(w, r, upstream)
 }
 
-// proxyGet fetches from upstream and streams the response back.
+// proxyGet fetches from upstream and streams the response back using ScraperAPI
 func proxyGet(w http.ResponseWriter, r *http.Request, upstream string) {
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstream, nil)
+	// Encode URL target agar aman dimasukkan ke dalam parameter ScraperAPI
+	encodedURL := url.QueryEscape(upstream)
+
+	// Format URL ScraperAPI
+	scraperURL := fmt.Sprintf("http://api.scraperapi.com?api_key=%s&url=%s&render=false", scraperAPIKey, encodedURL)
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, scraperURL, nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
 
-	// --- CLOUDFLARE BYPASS HEADERS ---
-	// Menyamar sebagai Google Chrome asli agar tidak diblokir
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9,id;q=0.8")
-	req.Header.Set("Referer", "https://shngm.io/")
-	req.Header.Set("Origin", "https://shngm.io")
-	req.Header.Set("Sec-Ch-Ua", `"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"`)
-	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
-	req.Header.Set("Sec-Ch-Ua-Platform", `"Windows"`)
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Site", "same-site")
-	// ---------------------------------
+	// ScraperAPI sudah mengurus User-Agent dan IP. Kita cukup pastikan menerima JSON.
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -120,7 +117,6 @@ func proxyGet(w http.ResponseWriter, r *http.Request, upstream string) {
 
 func extractPathParam(path, prefix string) string {
 	s := strings.TrimPrefix(path, prefix)
-	// Remove trailing slash if any
 	s = strings.TrimRight(s, "/")
 	return s
 }
