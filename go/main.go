@@ -115,7 +115,7 @@ func main() {
 	// Ambil port dari sistem (Render akan memberikan nilai ini secara otomatis)
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "3000" // Ini adalah cadangan jika Anda menjalankan di laptop sendiri
+		port = "3001" // Ini adalah cadangan jika Anda menjalankan di laptop sendiri
 	}
 
 	// Wrap with CORS
