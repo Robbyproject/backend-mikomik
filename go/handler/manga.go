@@ -89,8 +89,20 @@ func proxyGet(w http.ResponseWriter, r *http.Request, upstream string) {
 		return
 	}
 
-	req.Header.Set("User-Agent", "Mikomik/1.0")
-	req.Header.Set("Accept", "application/json")
+	// --- CLOUDFLARE BYPASS HEADERS ---
+	// Menyamar sebagai Google Chrome asli agar tidak diblokir
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9,id;q=0.8")
+	req.Header.Set("Referer", "https://shngm.io/")
+	req.Header.Set("Origin", "https://shngm.io")
+	req.Header.Set("Sec-Ch-Ua", `"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+	req.Header.Set("Sec-Ch-Ua-Platform", `"Windows"`)
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-site")
+	// ---------------------------------
 
 	resp, err := client.Do(req)
 	if err != nil {
