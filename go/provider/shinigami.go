@@ -70,6 +70,7 @@ func (s *ShinigamiProvider) GetPopular(ctx context.Context, page int) ([]model.U
 			Rating:        m.UserRate,
 			ViewCount:     m.ViewCount,
 			Source:        "Shinigami",
+			Country:       countryCode,
 		})
 	}
 

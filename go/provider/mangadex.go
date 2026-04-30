@@ -22,11 +22,8 @@ func (m *MangaDexProvider) GetName() string {
 }
 
 func (m *MangaDexProvider) GetPopular(ctx context.Context, page int) ([]model.UniversalManga, error) {
-	// Offset hitungan dari page. (Page 1 = 0, Page 2 = 30)
 	limit := 30
 	offset := (page - 1) * limit
-
-	// Endpoint MangaDex untuk komik berurut berdasarkan Follower terbanyak
 	targetURL := fmt.Sprintf("https://api.mangadex.org/manga?includes[]=cover_art&order[followedCount]=desc&limit=%d&offset=%d", limit, offset)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
@@ -44,7 +41,7 @@ func (m *MangaDexProvider) GetPopular(ctx context.Context, page int) ([]model.Un
 		return nil, fmt.Errorf("mangadex API returned status %d", resp.StatusCode)
 	}
 
-	// Bentuk JSON MangaDex sedikit berbeda, jadi kita parsing manual secara sederhana
+	// Tangkap "originalLanguage" untuk tahu negara asalnya
 	var mdResp struct {
 		Data []struct {
 			ID         string `json:"id"`
@@ -53,7 +50,8 @@ func (m *MangaDexProvider) GetPopular(ctx context.Context, page int) ([]model.Un
 					En string `json:"en"`
 					Ja string `json:"ja-ro"`
 				} `json:"title"`
-				Status string `json:"status"`
+				Status           string `json:"status"`
+				OriginalLanguage string `json:"originalLanguage"` // 🌟 TANGKAP BAHASA
 			} `json:"attributes"`
 			Relationships []struct {
 				Type       string `json:"type"`
@@ -70,21 +68,26 @@ func (m *MangaDexProvider) GetPopular(ctx context.Context, page int) ([]model.Un
 
 	var universalList []model.UniversalManga
 	for _, item := range mdResp.Data {
-		
-		// Ambil judul (Coba Inggris dulu, kalau kosong ambil Romaji Jepang)
 		title := item.Attributes.Title.En
 		if title == "" {
 			title = item.Attributes.Title.Ja
 		}
 
-		// Cari URL Cover Art dari relasi data MangaDex
 		coverURL := ""
 		for _, rel := range item.Relationships {
 			if rel.Type == "cover_art" {
-				// Format URL gambar MangaDex
-				coverURL = fmt.Sprintf("https://uploads.mangadex.org/covers/%s/%s", item.ID, rel.Attributes.FileName)
+				// 🌟 FIX GAMBAR: Tambahkan .256.jpg di belakang agar ukurannya kecil dan tidak error
+				coverURL = fmt.Sprintf("https://uploads.mangadex.org/covers/%s/%s.256.jpg", item.ID, rel.Attributes.FileName)
 				break
 			}
+		}
+
+		// 🌟 FIX NEGARA: Konversi bahasa ke kode negara
+		country := "jp" // Default jepang
+		if item.Attributes.OriginalLanguage == "ko" {
+			country = "kr"
+		} else if item.Attributes.OriginalLanguage == "zh" || item.Attributes.OriginalLanguage == "zh-hk" {
+			country = "cn"
 		}
 
 		universalList = append(universalList, model.UniversalManga{
@@ -92,9 +95,10 @@ func (m *MangaDexProvider) GetPopular(ctx context.Context, page int) ([]model.Un
 			Title:         title,
 			CoverImageURL: coverURL,
 			Status:        item.Attributes.Status,
-			Rating:        0, // MangaDex pakai API terpisah untuk rating
+			Rating:        0,
 			ViewCount:     0,
 			Source:        "MangaDex",
+			Country:       country, // 🌟 MASUKKAN KE SINI
 		})
 	}
 

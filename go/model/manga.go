@@ -66,4 +66,5 @@ type UniversalManga struct {
 	Rating        float64 `json:"user_rate"`
 	ViewCount     int     `json:"view_count"`
 	Source        string  `json:"source"`
+	Country       string  `json:"country"`
 }
