@@ -1,6 +1,13 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+)
 
 // APIResponse is the top-level response from the shinigami API.
 type APIResponse struct {
@@ -67,4 +74,95 @@ type UniversalManga struct {
 	ViewCount     int     `json:"view_count"`
 	Source        string  `json:"source"`
 	Country       string  `json:"country"`
+}
+
+// --- SISTEM CACHE SANSEKAI ---
+
+// SansekaiCache menyimpan data dari Sansekai agar tidak perlu fetch berulang kali
+type SansekaiCache struct {
+	sync.RWMutex
+	Data      interface{}
+	UpdatedAt time.Time
+}
+
+var (
+	LatestCache  = &SansekaiCache{}
+	PopularCache = &SansekaiCache{}
+)
+
+func fetchFromSansekai(endpoint string) (interface{}, error) {
+	url := fmt.Sprintf("https://api.sansekai.my.id/api/komik%s", endpoint)
+	
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Tambahkan header super lengkap menyerupai Browser Google Chrome Asli
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Referer", "https://api.sansekai.my.id/")
+	req.Header.Set("Origin", "https://api.sansekai.my.id")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		// 🌟 BAGIAN DETEKTIF: Baca isi pesan error langsung dari Sansekai 🌟
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status: %d, alasan dari server: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+/// updateCaches
+func updateCaches() {
+	fmt.Println("🔄 Memperbarui Cache Sansekai...")
+
+	// 🌟 UPDATE: Ubah 'type=all' menjadi 'type=project'
+	if data, err := fetchFromSansekai("/latest?type=project&project=komikcast"); err == nil {
+		LatestCache.Lock()
+		LatestCache.Data = data
+		LatestCache.UpdatedAt = time.Now()
+		LatestCache.Unlock()
+	} else {
+		fmt.Println("⚠️ Gagal fetch latest dari Sansekai:", err)
+	}
+
+	time.Sleep(2 * time.Second) // Jeda agar tidak dianggap spam
+
+	// 🌟 UPDATE: Ubah juga di sini
+	if data, err := fetchFromSansekai("/popular?type=project&project=komikcast"); err == nil {
+		PopularCache.Lock()
+		PopularCache.Data = data
+		PopularCache.UpdatedAt = time.Now()
+		PopularCache.Unlock()
+	} else {
+		fmt.Println("⚠️ Gagal fetch popular dari Sansekai:", err)
+	}
+	
+	fmt.Println("✅ Proses Cache Sansekai Selesai!")
+}
+
+// StartSansekaiWorker berjalan di background setiap 15 menit
+func StartSansekaiWorker() {
+	// Jalankan sekali di awal saat server baru menyala
+	go updateCaches()
+
+	// Jadwalkan setiap 15 menit
+	ticker := time.NewTicker(15 * time.Minute)
+	go func() {
+		for range ticker.C {
+			updateCaches()
+		}
+	}()
 }

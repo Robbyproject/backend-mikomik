@@ -8,11 +8,15 @@ import (
 
 	"mikomik-backend/db"
 	"mikomik-backend/handler"
+	"mikomik-backend/model"
 )
 
 func main() {
 	// Initialize MariaDB (graceful fallback if unavailable)
 	db.Init()
+
+	// JALANKAN WORKER SANSEKAI DI BACKGROUND
+	model.StartSansekaiWorker()
 
 	mux := http.NewServeMux()
 
@@ -21,6 +25,9 @@ func main() {
 	mux.HandleFunc("/api/manga/detail/", handler.MangaDetail)
 	mux.HandleFunc("/api/chapter/detail/", handler.ChapterDetail)
 	mux.HandleFunc("/api/chapter/", handler.ChapterList)
+
+	// ENDPOINT BARU UNTUK SANSEKAI PROXY
+	mux.HandleFunc("/api/proxy-sansekai", handler.SansekaiProxyList)
 
 	// Anime endpoints
 	mux.HandleFunc("/api/anime/list", handler.AnimeList)
