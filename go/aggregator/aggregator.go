@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"backend-mikomik/model" // Sesuaikan nama module
-	"backend-mikomik/provider" // Sesuaikan nama module
+	"mikomik-backend/model"    // <-- UBAH INI
+	"mikomik-backend/provider" // <-- UBAH INI
 )
 
 // FetchPopularManga mencoba mengambil data dari banyak provider secara berurutan

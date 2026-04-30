@@ -9,9 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"backend-mikomik/aggregator" // Sesuaikan nama module project Anda
-	"backend-mikomik/provider"   // Sesuaikan nama module project Anda
+	"mikomik-backend/aggregator" // <-- UBAH INI
+	"mikomik-backend/provider"   // <-- UBAH INI
 )
 
 const upstreamBase = "https://api.shngm.io"

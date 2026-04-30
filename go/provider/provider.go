@@ -2,7 +2,7 @@ package provider
 
 import (
 	"context"
-	"backend-mikomik/model" // Sesuaikan nama module go.mod Anda
+	"mikomik-backend/model" // <-- UBAH INI
 )
 
 // MangaProvider adalah kontrak wajib untuk semua sumber komik

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"backend-mikomik/model" // Sesuaikan nama module
+	"mikomik-backend/model" // <-- UBAH INI
 )
 
 type MangaDexProvider struct {
