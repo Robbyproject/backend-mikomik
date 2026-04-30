@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings" // BARU: Wajib ditambahkan untuk memproses teks negara
 
 	"mikomik-backend/model"
 )
@@ -56,10 +57,21 @@ func (s *ShinigamiProvider) GetPopular(ctx context.Context, page int) ([]model.U
 	// Konversi dari format Shinigami ke format UniversalManga
 	var universalList []model.UniversalManga
 	for _, m := range apiResp.Data {
-		
+
 		statusStr := "Ongoing"
 		if m.Status == 2 {
 			statusStr = "Completed"
+		}
+
+		// LOGIKA NEGARA SHINIGAMI: Default-nya Korea (kr)
+		countryCode := "kr"
+		if m.CountryID != "" {
+			countryRaw := strings.ToLower(m.CountryID)
+			if strings.Contains(countryRaw, "japan") || strings.Contains(countryRaw, "jp") {
+				countryCode = "jp"
+			} else if strings.Contains(countryRaw, "china") || strings.Contains(countryRaw, "cn") {
+				countryCode = "cn"
+			}
 		}
 
 		universalList = append(universalList, model.UniversalManga{
@@ -70,7 +82,7 @@ func (s *ShinigamiProvider) GetPopular(ctx context.Context, page int) ([]model.U
 			Rating:        m.UserRate,
 			ViewCount:     m.ViewCount,
 			Source:        "Shinigami",
-			Country:       countryCode,
+			Country:       countryCode, // Sekarang menggunakan variabel countryCode yang sudah difilter
 		})
 	}
 
