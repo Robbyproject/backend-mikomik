@@ -1,21 +1,24 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"backend-mikomik/aggregator" // Sesuaikan nama module project Anda
+	"backend-mikomik/provider"   // Sesuaikan nama module project Anda
 )
 
 const upstreamBase = "https://api.shngm.io"
-
-// API Key yang sudah Anda tes dan berhasil
 const scraperAPIKey = "d45d3542c5d2af84f1b5da3d5b05ffb1"
 
 var client = &http.Client{
-	Timeout: 40 * time.Second, // Beri waktu lebih lama untuk proses proxy
+	Timeout: 40 * time.Second,
 }
 
 func MangaList(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +26,39 @@ func MangaList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Buat URL upstream, pastikan tidak ada double '?' jika query kosong
+
+	query := r.URL.Query()
+	
+	// 🌟 FITUR BARU: Jika ini request untuk "Paling Populer" (sort=view), aktifkan Aggregator!
+	if query.Get("sort") == "view" {
+		page, _ := strconv.Atoi(query.Get("page"))
+		if page == 0 {
+			page = 1
+		}
+
+		// Siapkan Provider (Shinigami sebagai Utama, MangaDex sebagai Cadangan)
+		shinigami := provider.NewShinigamiProvider(scraperAPIKey, upstreamBase)
+		mangaDex := provider.NewMangaDexProvider()
+
+		providers := []provider.MangaProvider{shinigami, mangaDex}
+
+		// Jalankan Mesin Aggregator
+		data, err := aggregator.FetchPopularManga(page, providers)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		// Kirim hasil ke Frontend dalam format JSON
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": data,
+		})
+		return
+	}
+
+	// JIKA BUKAN POPULER: Gunakan cara lama (Proxy ScraperAPI)
 	rawQuery := r.URL.RawQuery
 	upstream := fmt.Sprintf("%s/v1/manga/list", upstreamBase)
 	if rawQuery != "" {
@@ -33,6 +68,7 @@ func MangaList(w http.ResponseWriter, r *http.Request) {
 	proxyGet(w, r, upstream)
 }
 
+// ... (Biarkan MangaDetail, ChapterList, ChapterDetail tetap sama persis seperti sebelumnya) ...
 func MangaDetail(w http.ResponseWriter, r *http.Request) {
 	mangaID := extractPathParam(r.URL.Path, "/api/manga/detail/")
 	if mangaID == "" {
@@ -61,10 +97,7 @@ func ChapterDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func proxyGet(w http.ResponseWriter, r *http.Request, upstream string) {
-	// PENTING: Gunakan url.QueryEscape agar URL target tidak berantakan saat dikirim ke ScraperAPI
 	encodedURL := url.QueryEscape(upstream)
-
-	// Format URL persis seperti yang Anda tes di browser
 	scraperURL := fmt.Sprintf("http://api.scraperapi.com?api_key=%s&url=%s", scraperAPIKey, encodedURL)
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, scraperURL, nil)
@@ -80,9 +113,8 @@ func proxyGet(w http.ResponseWriter, r *http.Request, upstream string) {
 	}
 	defer resp.Body.Close()
 
-	// Copy header penting
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // Pastikan CORS tetap jalan
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(resp.StatusCode)
 
 	io.Copy(w, resp.Body)
