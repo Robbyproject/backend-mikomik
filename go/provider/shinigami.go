@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 
-	"mikomik-backend/model" // <-- UBAH INI
+	"mikomik-backend/model"
 )
 
 type ShinigamiProvider struct {
