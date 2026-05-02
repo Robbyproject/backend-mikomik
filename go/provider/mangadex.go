@@ -17,23 +17,27 @@ type MangaDexProvider struct {
 }
 
 func NewMangaDexProvider() *MangaDexProvider {
-	return &MangaDexProvider{Client: &http.Client{}}
+	return &MangaDexProvider{
+		Client: &http.Client{
+			Timeout: 15 * time.Second,
+		},
+	}
 }
 
 func (m *MangaDexProvider) GetName() string {
 	return "MangaDex"
 }
 
-// 1. FUNGSI ORIGINAL (Jangan diubah agar Aggregator Shinigami tidak error)
+// 1. GetPopular: Mengambil manga terpopuler
 func (m *MangaDexProvider) GetPopular(ctx context.Context, page int) ([]model.UniversalManga, error) {
 	limit := 30
 	offset := (page - 1) * limit
-	targetURL := fmt.Sprintf("https://api.mangadex.org/manga?includes[]=cover_art&order[followedCount]=desc&limit=%d&offset=%d", limit, offset)
+	targetURL := fmt.Sprintf("https://api.mangadex.org/manga?includes[]=cover_art&order[followedCount]=desc&limit=%d&offset=%d&contentRating[]=safe&contentRating[]=suggestive", limit, offset)
 
 	return m.fetchFromMangaDex(ctx, targetURL)
 }
 
-// 2. FUNGSI BARU: GetCustom (Untuk menangani Popular, Recommended, Seasonal, dll)
+// 2. GetCustom: Menangani berbagai filter (Rating, Seasonal, Tag, dll)
 func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period, tag, listID string) ([]model.UniversalManga, error) {
 	limit := 30
 	offset := (page - 1) * limit
@@ -46,7 +50,6 @@ func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period
 	params.Add("contentRating[]", "safe")
 	params.Add("contentRating[]", "suggestive")
 
-	// Logika Sorting
 	switch sort {
 	case "rating":
 		params.Add("order[rating]", "desc")
@@ -60,7 +63,6 @@ func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period
 		params.Add("order[followedCount]", "desc")
 	}
 
-	// Logika Period (Harian / Mingguan)
 	if period != "" {
 		now := time.Now()
 		var since string
@@ -69,19 +71,15 @@ func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period
 		} else if period == "mingguan" {
 			since = now.AddDate(0, 0, -7).Format("2006-01-02T15:04:05")
 		}
-
 		if since != "" {
 			params.Add("createdAtSince", since)
-			params.Set("order[followedCount]", "desc")
 		}
 	}
 
-	// Logika Tag (Self-Published / Doujinshi)
-	if tag == "doujinshi" || tag == "self-published" {
+	if tag == "doujinshi" {
 		params.Add("includedTags[]", "8987b7a6-2c5e-49b4-93e5-0219c6769151")
 	}
 
-	// Logika List/Seasonal
 	if listID == "seasonal_spring_2026" {
 		params.Add("year", "2026")
 	}
@@ -90,111 +88,170 @@ func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period
 	return m.fetchFromMangaDex(ctx, targetURL)
 }
 
-// 3. FUNGSI DIPERBARUI: GetLatestChapters (Menggunakan endpoint /manga agar bisa dapat gambar cover)
+// 3. GetLatestChapters: Logika 2 Tahap agar Real-time & Ada Gambar
 func (m *MangaDexProvider) GetLatestChapters(ctx context.Context, page int) ([]model.UniversalManga, error) {
 	limit := 30
 	offset := (page - 1) * limit
 
-	baseURL := "https://api.mangadex.org/manga"
-	params := url.Values{}
-	params.Add("includes[]", "cover_art")
-	params.Add("limit", strconv.Itoa(limit))
-	params.Add("offset", strconv.Itoa(offset))
-	params.Add("order[latestUploadedChapter]", "desc") // Diurutkan berdasarkan kapan chapter terbarunya diunggah
-	params.Add("contentRating[]", "safe")
-	params.Add("contentRating[]", "suggestive")
-
-	targetURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
-
-	// Kita fetch list komiknya dengan cover-nya
-	mangaList, err := m.fetchFromMangaDex(ctx, targetURL)
-	if err != nil {
-		return nil, err
-	}
-
-	// (Opsional) Untuk mempermudah, kita buat statusnya menjadi tulisan "Baru Update".
-	// Jika ingin informasi nomor chapter real-time, kita harus melakukan 1 request lagi 
-	// per komik ke MangaDex, yang mana akan memperlambat server secara signifikan.
-	for i := range mangaList {
-		mangaList[i].Description = "Baru Update" 
-		mangaList[i].Status = "Today" 
-	}
-
-	return mangaList, nil
-}
-
-// Fungsi Bantuan Fetch
-func (m *MangaDexProvider) fetchFromMangaDex(ctx context.Context, targetURL string) ([]model.UniversalManga, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		return nil, err
-	}
-
+	// TAHAP 1: Ambil list chapter terbaru
+	chURL := fmt.Sprintf("https://api.mangadex.org/chapter?limit=%d&offset=%d&order[readableAt]=desc&includes[]=manga&contentRating[]=safe&contentRating[]=suggestive", limit, offset)
+	
+	req, _ := http.NewRequestWithContext(ctx, "GET", chURL, nil)
 	resp, err := m.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("mangadex API returned status %d", resp.StatusCode)
-	}
-
-	var mdResp struct {
+	var chResp struct {
 		Data []struct {
-			ID         string `json:"id"`
 			Attributes struct {
-				Title struct {
-					En string `json:"en"`
-					Ja string `json:"ja-ro"`
-				} `json:"title"`
-				Status           string `json:"status"`
-				OriginalLanguage string `json:"originalLanguage"`
+				Chapter    string    `json:"chapter"`
+				ReadableAt time.Time `json:"readableAt"`
 			} `json:"attributes"`
 			Relationships []struct {
-				Type       string `json:"type"`
-				Attributes struct {
-					FileName string `json:"fileName"`
-				} `json:"attributes"`
+				Type string `json:"type"`
+				ID   string `json:"id"`
 			} `json:"relationships"`
 		} `json:"data"`
 	}
+	if err := json.NewDecoder(resp.Body).Decode(&chResp); err != nil {
+		return nil, err
+	}
 
+	// Mapping ID Manga dan Info Chapter
+	var mangaIDs []string
+	chapterMap := make(map[string]string)
+	timeMap := make(map[string]time.Time)
+
+	for _, ch := range chResp.Data {
+		for _, rel := range ch.Relationships {
+			if rel.Type == "manga" {
+				mangaIDs = append(mangaIDs, rel.ID)
+				chapterMap[rel.ID] = ch.Attributes.Chapter
+				timeMap[rel.ID] = ch.Attributes.ReadableAt
+			}
+		}
+	}
+
+	if len(mangaIDs) == 0 {
+		return []model.UniversalManga{}, nil
+	}
+
+	// TAHAP 2: Ambil Detail Manga (Cover & Judul) berdasarkan ID dari Tahap 1
+	mangaParams := url.Values{}
+	for _, id := range mangaIDs {
+		mangaParams.Add("ids[]", id)
+	}
+	mangaParams.Add("includes[]", "cover_art")
+	mangaParams.Add("limit", strconv.Itoa(limit))
+	
+	finalURL := fmt.Sprintf("https://api.mangadex.org/manga?%s", mangaParams.Encode())
+	
+	return m.fetchFromMangaDexWithExtra(ctx, finalURL, chapterMap, timeMap)
+}
+
+// Fungsi Fetch Utama
+func (m *MangaDexProvider) fetchFromMangaDex(ctx context.Context, targetURL string) ([]model.UniversalManga, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	resp, err := m.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var mdResp mdResponse
 	if err := json.NewDecoder(resp.Body).Decode(&mdResp); err != nil {
 		return nil, err
 	}
 
-	var universalList []model.UniversalManga
-	for _, item := range mdResp.Data {
+	return m.mapToUniversal(mdResp, nil, nil), nil
+}
+
+// Fungsi Fetch Khusus dengan info Chapter & Waktu
+func (m *MangaDexProvider) fetchFromMangaDexWithExtra(ctx context.Context, targetURL string, cMap map[string]string, tMap map[string]time.Time) ([]model.UniversalManga, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	resp, err := m.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var mdResp mdResponse
+	if err := json.NewDecoder(resp.Body).Decode(&mdResp); err != nil {
+		return nil, err
+	}
+
+	return m.mapToUniversal(mdResp, cMap, tMap), nil
+}
+
+// Struct internal untuk decoding MangaDex
+type mdResponse struct {
+	Data []struct {
+		ID         string `json:"id"`
+		Attributes struct {
+			Title struct {
+				En string `json:"en"`
+				Ja string `json:"ja-ro"`
+			} `json:"title"`
+			Status           string `json:"status"`
+			OriginalLanguage string `json:"originalLanguage"`
+		} `json:"attributes"`
+		Relationships []struct {
+			Type       string `json:"type"`
+			Attributes struct {
+				FileName string `json:"fileName"`
+			} `json:"attributes"`
+		} `json:"relationships"`
+	} `json:"data"`
+}
+
+// Helper untuk mengubah data MangaDex ke format Universal aplikasi kita
+func (m *MangaDexProvider) mapToUniversal(md mdResponse, cMap map[string]string, tMap map[string]time.Time) []model.UniversalManga {
+	var list []model.UniversalManga
+	for _, item := range md.Data {
 		title := item.Attributes.Title.En
 		if title == "" {
 			title = item.Attributes.Title.Ja
 		}
 
-		coverURL := ""
+		fileName := ""
 		for _, rel := range item.Relationships {
 			if rel.Type == "cover_art" {
-				coverURL = fmt.Sprintf("https://uploads.mangadex.org/covers/%s/%s.256.jpg", item.ID, rel.Attributes.FileName)
-				break
+				fileName = rel.Attributes.FileName
 			}
 		}
 
-		country := "jp"
-		if item.Attributes.OriginalLanguage == "ko" {
-			country = "kr"
-		} else if item.Attributes.OriginalLanguage == "zh" || item.Attributes.OriginalLanguage == "zh-hk" {
-			country = "cn"
+		coverURL := ""
+		if fileName != "" {
+			coverURL = fmt.Sprintf("https://uploads.mangadex.org/covers/%s/%s.256.jpg", item.ID, fileName)
 		}
 
-		universalList = append(universalList, model.UniversalManga{
+		// Hitung waktu relatif jika ada
+		statusStr := item.Attributes.Status
+		descStr := ""
+		if tMap != nil {
+			diff := time.Since(tMap[item.ID])
+			if diff.Hours() < 1 {
+				statusStr = fmt.Sprintf("%d mnt", int(diff.Minutes()))
+			} else if diff.Hours() < 24 {
+				statusStr = fmt.Sprintf("%d jam", int(diff.Hours()))
+			} else {
+				statusStr = fmt.Sprintf("%d hari", int(diff.Hours()/24))
+			}
+		}
+		if cMap != nil {
+			descStr = "Ch. " + cMap[item.ID]
+		}
+
+		list = append(list, model.UniversalManga{
 			ID:            item.ID,
 			Title:         title,
 			CoverImageURL: coverURL,
-			Status:        item.Attributes.Status,
+			Description:   descStr,
+			Status:        statusStr,
 			Source:        "MangaDex",
-			Country:       country,
 		})
 	}
-
-	return universalList, nil
+	return list
 }
