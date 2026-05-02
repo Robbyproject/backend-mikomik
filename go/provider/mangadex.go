@@ -43,6 +43,8 @@ func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period
 	params.Add("includes[]", "cover_art")
 	params.Add("limit", strconv.Itoa(limit))
 	params.Add("offset", strconv.Itoa(offset))
+	params.Add("contentRating[]", "safe")
+	params.Add("contentRating[]", "suggestive")
 
 	// Logika Sorting
 	switch sort {
@@ -67,10 +69,10 @@ func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period
 		} else if period == "mingguan" {
 			since = now.AddDate(0, 0, -7).Format("2006-01-02T15:04:05")
 		}
-		
+
 		if since != "" {
 			params.Add("createdAtSince", since)
-			params.Set("order[followedCount]", "desc") 
+			params.Set("order[followedCount]", "desc")
 		}
 	}
 
@@ -88,86 +90,37 @@ func (m *MangaDexProvider) GetCustom(ctx context.Context, page int, sort, period
 	return m.fetchFromMangaDex(ctx, targetURL)
 }
 
-// 3. FUNGSI BARU: GetLatestChapters (Khusus untuk Latest Update agar dapat real-time chapter)
+// 3. FUNGSI DIPERBARUI: GetLatestChapters (Menggunakan endpoint /manga agar bisa dapat gambar cover)
 func (m *MangaDexProvider) GetLatestChapters(ctx context.Context, page int) ([]model.UniversalManga, error) {
 	limit := 30
 	offset := (page - 1) * limit
-	
-	targetURL := fmt.Sprintf("https://api.mangadex.org/chapter?includes[]=manga&includes[]=cover_art&order[readableAt]=desc&limit=%d&offset=%d&contentRating[]=safe&contentRating[]=suggestive", limit, offset)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	baseURL := "https://api.mangadex.org/manga"
+	params := url.Values{}
+	params.Add("includes[]", "cover_art")
+	params.Add("limit", strconv.Itoa(limit))
+	params.Add("offset", strconv.Itoa(offset))
+	params.Add("order[latestUploadedChapter]", "desc") // Diurutkan berdasarkan kapan chapter terbarunya diunggah
+	params.Add("contentRating[]", "safe")
+	params.Add("contentRating[]", "suggestive")
+
+	targetURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+
+	// Kita fetch list komiknya dengan cover-nya
+	mangaList, err := m.fetchFromMangaDex(ctx, targetURL)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := m.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var chResp struct {
-		Data []struct {
-			Attributes struct {
-				Chapter    string    `json:"chapter"`
-				ReadableAt time.Time `json:"readableAt"`
-			} `json:"attributes"`
-			Relationships []struct {
-				Type       string `json:"type"`
-				ID         string `json:"id"`
-				Attributes struct {
-					Title struct {
-						En string `json:"en"`
-					} `json:"title"`
-					FileName string `json:"fileName"`
-				} `json:"attributes"`
-			} `json:"relationships"`
-		} `json:"data"`
+	// (Opsional) Untuk mempermudah, kita buat statusnya menjadi tulisan "Baru Update".
+	// Jika ingin informasi nomor chapter real-time, kita harus melakukan 1 request lagi 
+	// per komik ke MangaDex, yang mana akan memperlambat server secara signifikan.
+	for i := range mangaList {
+		mangaList[i].Description = "Baru Update" 
+		mangaList[i].Status = "Today" 
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&chResp); err != nil {
-		return nil, err
-	}
-
-	var universalList []model.UniversalManga
-	for _, ch := range chResp.Data {
-		var mangaID, mangaTitle, fileName string
-		for _, rel := range ch.Relationships {
-			if rel.Type == "manga" {
-				mangaID = rel.ID
-				mangaTitle = rel.Attributes.Title.En
-			}
-			if rel.Type == "cover_art" {
-				fileName = rel.Attributes.FileName
-			}
-		}
-
-		// Hitung waktu relatif
-		timeDiff := time.Since(ch.Attributes.ReadableAt)
-		timeStr := ""
-		if timeDiff.Hours() < 1 {
-			timeStr = fmt.Sprintf("%d mnt", int(timeDiff.Minutes()))
-		} else if timeDiff.Hours() < 24 {
-			timeStr = fmt.Sprintf("%d jam", int(timeDiff.Hours()))
-		} else {
-			timeStr = fmt.Sprintf("%d hari", int(timeDiff.Hours()/24))
-		}
-
-		chapterStr := ch.Attributes.Chapter
-		if chapterStr == "" {
-			chapterStr = "Oneshot"
-		}
-
-		universalList = append(universalList, model.UniversalManga{
-			ID:            mangaID,
-			Title:         mangaTitle,
-			CoverImageURL: fmt.Sprintf("https://uploads.mangadex.org/covers/%s/%s.256.jpg", mangaID, fileName),
-			Source:        "MangaDex",
-			Description:   fmt.Sprintf("Ch. %s", chapterStr), // Simpan nomor chapter di sini
-			Status:        timeStr,                          // Simpan waktu relatif di sini
-		})
-	}
-	return universalList, nil
+	return mangaList, nil
 }
 
 // Fungsi Bantuan Fetch
