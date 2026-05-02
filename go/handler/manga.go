@@ -106,27 +106,26 @@ func ChapterList(w http.ResponseWriter, r *http.Request) {
 }
 
 func ChapterDetail(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// Ambil ID dari URL. Misal URL-nya: /api/chapter/read/12345
-	// Sesuaikan dengan route mux Anda, asumsikan ID ada di segmen terakhir URL
-	pathParts := strings.Split(r.URL.Path, "/")
-	chapterID := pathParts[len(pathParts)-1]
+    // 👇 UBAH BAGIAN INI: Ganti /read/ menjadi /detail/
+    chapterID := strings.TrimPrefix(r.URL.Path, "/api/chapter/detail/")
+    chapterID = strings.TrimSpace(chapterID)
 
-	if chapterID == "" {
-		http.Error(w, `{"error": "chapter_id required"}`, http.StatusBadRequest)
-		return
-	}
+    if chapterID == "" {
+        http.Error(w, `{"error": "chapter_id is missing"}`, http.StatusBadRequest)
+        return
+    }
 
-	mangaDex := provider.NewMangaDexProvider()
-	images, err := mangaDex.GetChapterImages(r.Context(), chapterID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    mangaDex := provider.NewMangaDexProvider()
+    images, err := mangaDex.GetChapterImages(r.Context(), chapterID)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 
-	json.NewEncoder(w).Encode(map[string]interface{}{"data": images})
+    json.NewEncoder(w).Encode(map[string]interface{}{"data": images})
 }
 
 func SansekaiProxyList(w http.ResponseWriter, r *http.Request) {
