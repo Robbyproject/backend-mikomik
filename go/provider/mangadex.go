@@ -379,3 +379,38 @@ func (m *MangaDexProvider) GetMangaChapters(ctx context.Context, id string) ([]m
 	}
 	return chapters, nil
 }
+
+// FUNGSI BARU 3: Mengambil Gambar Lembaran Komik (Chapter Detail)
+func (m *MangaDexProvider) GetChapterImages(ctx context.Context, chapterID string) ([]string, error) {
+	// Endpoint khusus MangaDex "at-home/server" untuk mendapatkan URL gambar komik
+	targetURL := fmt.Sprintf("https://api.mangadex.org/at-home/server/%s", chapterID)
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	resp, err := m.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var mdResp struct {
+		BaseUrl string `json:"baseUrl"`
+		Chapter struct {
+			Hash string   `json:"hash"`
+			Data []string `json:"data"` // Berisi daftar nama file gambar kualitas tinggi
+		} `json:"chapter"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&mdResp); err != nil {
+		return nil, err
+	}
+
+	var imageUrls []string
+	// Susun URL lengkap untuk masing-masing gambar
+	for _, filename := range mdResp.Chapter.Data {
+		// Format MangaDex: {baseUrl}/data/{hash}/{filename}
+		imgURL := fmt.Sprintf("%s/data/%s/%s", mdResp.BaseUrl, mdResp.Chapter.Hash, filename)
+		imageUrls = append(imageUrls, imgURL)
+	}
+
+	return imageUrls, nil
+}

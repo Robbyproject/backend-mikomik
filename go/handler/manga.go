@@ -108,7 +108,25 @@ func ChapterList(w http.ResponseWriter, r *http.Request) {
 func ChapterDetail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	http.Error(w, `{"error": "Endpoint Baca Chapter sedang disesuaikan untuk MangaDex"}`, http.StatusNotImplemented)
+
+	// Ambil ID dari URL. Misal URL-nya: /api/chapter/read/12345
+	// Sesuaikan dengan route mux Anda, asumsikan ID ada di segmen terakhir URL
+	pathParts := strings.Split(r.URL.Path, "/")
+	chapterID := pathParts[len(pathParts)-1]
+
+	if chapterID == "" {
+		http.Error(w, `{"error": "chapter_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	mangaDex := provider.NewMangaDexProvider()
+	images, err := mangaDex.GetChapterImages(r.Context(), chapterID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"data": images})
 }
 
 func SansekaiProxyList(w http.ResponseWriter, r *http.Request) {
