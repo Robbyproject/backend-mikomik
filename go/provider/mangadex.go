@@ -95,7 +95,7 @@ func (m *MangaDexProvider) GetLatestChapters(ctx context.Context, page int) ([]m
 
 	// TAHAP 1: Ambil list chapter terbaru
 	chURL := fmt.Sprintf("https://api.mangadex.org/chapter?limit=%d&offset=%d&order[readableAt]=desc&includes[]=manga&contentRating[]=safe&contentRating[]=suggestive", limit, offset)
-	
+
 	req, _ := http.NewRequestWithContext(ctx, "GET", chURL, nil)
 	resp, err := m.Client.Do(req)
 	if err != nil {
@@ -145,9 +145,9 @@ func (m *MangaDexProvider) GetLatestChapters(ctx context.Context, page int) ([]m
 	}
 	mangaParams.Add("includes[]", "cover_art")
 	mangaParams.Add("limit", strconv.Itoa(limit))
-	
+
 	finalURL := fmt.Sprintf("https://api.mangadex.org/manga?%s", mangaParams.Encode())
-	
+
 	return m.fetchFromMangaDexWithExtra(ctx, finalURL, chapterMap, timeMap)
 }
 
@@ -254,4 +254,128 @@ func (m *MangaDexProvider) mapToUniversal(md mdResponse, cMap map[string]string,
 		})
 	}
 	return list
+}
+
+// FUNGSI BARU 1: Mengambil Detail Komik
+func (m *MangaDexProvider) GetMangaDetail(ctx context.Context, id string) (*model.MangaDetailInfo, error) {
+	targetURL := fmt.Sprintf("https://api.mangadex.org/manga/%s?includes[]=author&includes[]=artist&includes[]=cover_art", id)
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	resp, err := m.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var mdResp struct {
+		Data struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Title       map[string]string `json:"title"`
+				Description map[string]string `json:"description"`
+				Status      string            `json:"status"`
+				Year        int               `json:"year"`
+				Tags        []struct {
+					Attributes struct {
+						Name map[string]string `json:"name"`
+					} `json:"attributes"`
+				} `json:"tags"`
+			} `json:"attributes"`
+			Relationships []struct {
+				Type       string `json:"type"`
+				Attributes struct {
+					Name     string `json:"name"`
+					FileName string `json:"fileName"`
+				} `json:"attributes"`
+			} `json:"relationships"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&mdResp); err != nil {
+		return nil, err
+	}
+
+	data := mdResp.Data
+	
+	// Ambil Judul & Deskripsi (prioritas Inggris)
+	title := data.Attributes.Title["en"]
+	if title == "" {
+		for _, t := range data.Attributes.Title { title = t; break }
+	}
+	
+	desc := data.Attributes.Description["en"]
+	if desc == "" {
+		desc = data.Attributes.Description["id"]
+	}
+
+	// Ambil Cover, Author, dan Genre
+	coverURL := ""
+	author := "Unknown"
+	var genres []string
+
+	for _, rel := range data.Relationships {
+		if rel.Type == "cover_art" {
+			coverURL = fmt.Sprintf("https://uploads.mangadex.org/covers/%s/%s", data.ID, rel.Attributes.FileName)
+		} else if rel.Type == "author" {
+			author = rel.Attributes.Name
+		}
+	}
+
+	for _, tag := range data.Attributes.Tags {
+		if name, ok := tag.Attributes.Name["en"]; ok {
+			genres = append(genres, name)
+		}
+	}
+
+	return &model.MangaDetailInfo{
+		ID:            data.ID,
+		Title:         title,
+		Description:   desc,
+		CoverImageURL: coverURL,
+		Author:        author,
+		Status:        data.Attributes.Status,
+		Genres:        genres,
+		Year:          data.Attributes.Year,
+	}, nil
+}
+
+// FUNGSI BARU 2: Mengambil Daftar Chapter
+func (m *MangaDexProvider) GetMangaChapters(ctx context.Context, id string) ([]model.ChapterItem, error) {
+	// Limit 100 chapter terbaru. Bahasa ID & EN.
+	targetURL := fmt.Sprintf("https://api.mangadex.org/manga/%s/feed?limit=100&order[chapter]=desc&translatedLanguage[]=id&translatedLanguage[]=en", id)
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	resp, err := m.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var chResp struct {
+		Data []struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Chapter            string    `json:"chapter"`
+				Title              string    `json:"title"`
+				TranslatedLanguage string    `json:"translatedLanguage"`
+				PublishAt          time.Time `json:"publishAt"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&chResp); err != nil {
+		return nil, err
+	}
+
+	var chapters []model.ChapterItem
+	for _, ch := range chResp.Data {
+		chapters = append(chapters, model.ChapterItem{
+			ID:        ch.ID,
+			Chapter:   ch.Attributes.Chapter,
+			Title:     ch.Attributes.Title,
+			Language:  ch.Attributes.TranslatedLanguage,
+			CreatedAt: ch.Attributes.PublishAt.Format("02 Jan 2006"),
+		})
+	}
+	return chapters, nil
 }

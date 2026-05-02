@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings" // <-- Ditambahkan untuk parsing URL
 
 	"mikomik-backend/model"
 	"mikomik-backend/provider"
@@ -55,21 +56,53 @@ func MangaList(w http.ResponseWriter, r *http.Request) {
 }
 
 // =========================================================================
-// ENDPOINT DI BAWAH INI DINONAKTIFKAN SEMENTARA (HANYA MENGEMBALIKAN ERROR)
-// Karena Shinigami dimatikan, endpoint untuk detail & baca komik 
-// akan kita buat ulang khusus untuk MangaDex nanti.
+// ENDPOINT AKTIF UNTUK DETAIL DAN CHAPTER LIST
 // =========================================================================
 
 func MangaDetail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	http.Error(w, `{"error": "Endpoint Detail sedang disesuaikan untuk MangaDex"}`, http.StatusNotImplemented)
+
+	// Ambil ID dari URL (contoh: /api/manga/detail/12345)
+	path := strings.TrimPrefix(r.URL.Path, "/api/manga/detail/")
+	mangaID := strings.TrimRight(path, "/")
+
+	if mangaID == "" {
+		http.Error(w, `{"error": "manga_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	mangaDex := provider.NewMangaDexProvider()
+	detail, err := mangaDex.GetMangaDetail(r.Context(), mangaID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"data": detail})
 }
 
 func ChapterList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	http.Error(w, `{"error": "Endpoint Chapter sedang disesuaikan untuk MangaDex"}`, http.StatusNotImplemented)
+
+	// Ambil ID dari URL (contoh: /api/chapter/12345/list)
+	path := strings.TrimPrefix(r.URL.Path, "/api/chapter/")
+	mangaID := strings.TrimSuffix(path, "/list")
+
+	if mangaID == "" {
+		http.Error(w, `{"error": "manga_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	mangaDex := provider.NewMangaDexProvider()
+	chapters, err := mangaDex.GetMangaChapters(r.Context(), mangaID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"data": chapters})
 }
 
 func ChapterDetail(w http.ResponseWriter, r *http.Request) {
